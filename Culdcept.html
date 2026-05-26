@@ -1,0 +1,246 @@
+<!doctype html><meta charset="UTF-8"><link rel="icon" href="data:,">
+<link href="https://fonts.googleapis.com/css2?family=DotGothic16" rel="stylesheet">
+<link href="Culdcept/style.css" rel="stylesheet">
+<script type="module">
+
+
+
+import {View}			from './js/Inference.js'
+import {SVG,Rect}		from './js/SVG.js'
+import {Ticker,Timer}	from './js/Ticker.js'
+
+import * as Asset	from './Culdcept/Asset.js'
+import * as Scene	from './Culdcept/Scene.js'
+import * as Stage	from './Culdcept/Stage.js'
+import * as Dialog	from './Culdcept/Dialog.js'
+import * as Graphic	from './Culdcept/Graphic.js'
+import * as Tween	from './Culdcept/Tween.js'
+
+
+class Content extends View{
+	constructor(){
+		super(document.body)
+		new Asset.Loader(v=>{
+			this.add(new Culdcept(v))
+		})
+	}
+}
+
+class Culdcept extends SVG{
+	constructor(asset){
+		super('svg',asset,{viewBox:'-720 -540 1440 1080'})
+		let deck = new PlayerDeck(asset)
+		let hand = new PlayerHand(
+			new Card(deck.get('Culdcept-C101NA')),
+			new Card(deck.get('Culdcept-C301WA')),
+			new Card(deck.get('Culdcept-C501AH')),
+			deck.draw(),
+		)
+		let scene = new Scene.Manager(
+			new StageLayer(),
+			new GraphicLayer(),
+			new DialogLayer(),
+		)
+		scene.property({deck,hand}).change(new DrawPhase())
+		this.add(scene.items,{
+			action		:e=>scene.event(e.detail),
+			click		:e=>scene.event({type:'CLICK'},e.target.dataset),
+			mouseover	:e=>scene.event(e.target.dataset,{type:'HOVER'}),
+		})
+	}
+	varListener(k,v){document.body.addEventListener(k,v);return this}
+}
+
+class StageLayer extends SVG{
+	constructor(){
+		super({id:'Stage'})
+		this.contents = [new Stage.Field(),new Stage.Player()]
+		this.add(this.contents)
+	}
+	match(v){return v instanceof Stage.Member}
+	clear(){return this.replace(this.contents)}
+}
+
+class GraphicLayer extends SVG{
+	constructor(){
+		super('foreignObject',{id:'Graphic'},new Rect(-960,-540,1920,1080))
+		this.graphic = new Graphic.Canvas(1920,1080)
+		this.add(this.graphic)
+		Ticker.add(this.graphic)
+	}
+	match(v){return v instanceof Graphic.Member}
+	clear(){
+		for(let v of this.graphic.items.slice()) this.graphic.remove(v)
+		return this
+	}
+	var(v){
+		if(this.match(v)===false) return super.var(v)
+		this.graphic.add(v)
+		return this
+	}
+}
+
+class DialogLayer extends SVG{
+	constructor(...a){
+		super({id:'Modal'})
+	}
+	match(v){return v instanceof Dialog.Member}
+	clear(){return this.replace()}
+}
+
+
+
+class PlayerDeck{
+	constructor(asset){
+		this.items = asset.getCreatures()
+	}
+	draw()	{return new Card(this.random())}
+	get(id)	{return this.items.find(v=>v.id===id)}
+	random(){return this.items[Math.floor(Math.random()*this.items.length)]}
+}
+
+class PlayerHand extends Stage.Member{
+	constructor(...a){
+		super('Hand')
+		this.items	= new Stage.Cards().position(-196*3,350)
+		this.timer	= new Timer(0.1,e=>this.items.rotate(e.value))
+		this.exit	= new Stage.Exit(196*3,350)
+		this.add(this.exit,...a)
+	}
+	match(v){return v instanceof Card}
+	get(id)	{return this.items.find(v=>v.id===id)}
+	var(v){
+		this.match(v) && this.items.add(v)
+		return super.var(v)
+	}
+	remove(v){
+		this.items.remove(v)
+		return this
+	}
+	flip(){
+		this.timer.start()
+		return this
+	}
+}
+
+class Card extends SVG{
+	constructor(data){
+		super('Card').token().xform()
+		this.data	= data
+		let rect	= new Rect(-100,-140,200,280)
+		let button	= {fill:'transparent',stroke:'transparent',stroke_width:4}
+		this.add(
+			new SVG('.content',
+				new SVG('use',rect,{href:'#'+data.id}),
+				new SVG('use',rect,{href:'#'+data.elementFrame}),
+				new SVG('rect Button',rect,button).data({type:'CARD',id:this.id})
+			)
+		)
+	}
+	rotate(t){
+		this.transform.scaleX = Math.sin(Math.PI*t/2)
+		return this
+	}
+}
+
+class CardModel extends Graphic.Box{
+	constructor(card,tween){
+		super(550,770,4)
+		let color = 0x333333
+		let material = [{color},{color},{color},{color},
+			new Graphic.Texture(550,770,card.data.image,card.data.frame),
+			new Graphic.Texture(550,770,card.data.back)
+		]
+		this.add(material)
+		this.position = this._negateY(card.transform.position)
+		tween && this.change(tween)
+	}
+}
+
+
+
+class DrawPhase extends Scene.Phase{
+	constructor(){
+		super()
+		let dialog	= new Dialog.Draw('カードを１枚引きました')
+		this.add({
+			DIALOG	:e=>this.openWindow(dialog),
+			CLICK	:v=>this.card && this.closeWindow(new Tween.AddToHand()),
+			DONE	:e=>this.next(new CheckPhase()),
+		})
+	}
+	enter(scene){
+		this.card = scene.deck.draw()
+		scene.hand.add(this.card)
+		this.entity = new CardModel(this.card,new Tween.Draw())
+		scene.clear().add(this.entity)
+		return this
+	}
+}
+
+class CheckPhase extends Scene.Phase{
+	enter(scene){
+		let full = this.scene.hand.items.length>6
+		this.scene.change(full?new DiscardPhase():new SelectPhase())
+		return this
+	}
+}
+
+class ConfirmPhase extends Scene.Phase{
+	constructor(...a){
+		super({
+			HOVER			:e=>this.entity || this.previewCard(this.label,e.card),
+			CARD			:e=>this.selectCard(e.card),
+			CLICK			:e=>this.card && this.dispatch({type:'DIALOG_CANCEL'}),
+			DIALOG			:e=>this.openWindow(this.dialog),
+			DIALOG_OK		:e=>this.action(),
+			DIALOG_CANCEL	:e=>this.closeWindow(new Tween.Cancel()),
+			DONE			:e=>this.next(new CheckPhase()),
+		}).add(...a)
+	}
+	selectCard(card){
+		this.card	= card
+		this.entity	= new CardModel(card,new Tween.Select())
+		this.scene.clear().add(this.entity)
+		return this
+	}
+}
+
+class SelectPhase extends ConfirmPhase{
+	constructor(){
+		super({
+			DIALOG_OK	:e=>this.action(new Tween.Summon()),
+			EXIT_BUTTON	:e=>this.scene.change(new DrawPhase()),
+		})
+		this.label	= new Dialog.Guide('クリーチャー選択')
+		this.dialog	= new Dialog.Confirm('このクリーチャーを召喚しますか？')
+	}
+	enter(scene){
+		scene.add(scene.hand.flip(),this.label)
+		scene.hand.exit.visible(true)
+		return this
+	}
+}
+
+class DiscardPhase extends ConfirmPhase{
+	constructor(){
+		super({
+			DIALOG_OK	:e=>this.action(new Tween.Discard()),
+		})
+		this.label	= new Dialog.Guide("カードが持ちきれません\nどれか捨てて下さい")
+		this.dialog	= new Dialog.Confirm('このカードを捨てますか？')
+	}
+	enter(scene){
+		scene.add(scene.hand.flip(),this.label)
+		scene.hand.exit.visible(false)
+		return this
+	}
+}
+
+
+
+new Content()
+
+
+
+</script>
