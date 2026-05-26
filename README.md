@@ -1,1 +1,1 @@
-[カルドセプト](https://moyomon.github.io/Culdcept/Culdcept.html)
+リンク：https://moyomon.github.io/Culdcept/Culdcept.html
